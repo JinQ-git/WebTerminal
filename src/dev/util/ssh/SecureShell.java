@@ -1,36 +1,28 @@
 package dev.util.ssh;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Locale;
 
 import com.jcraft.jsch.*;
 
-public class SecureShell extends Thread
+public class SecureShell
 {
-    public interface SecureShellListener { public void onMessage(String msg); public void onLogOut(); }
-
     // JSch Context, Session and Channel
     private JSch jsCtx = null;
     private com.jcraft.jsch.Session jsSession = null;
     private ChannelShell jsChannel = null;
 
     private OutputStream jsCommandOut = null;
-    private InputStream  jsTerminalIn = null;
+    private OutputStream jsTerminalOut = System.out;
 
     private Object stateMutex = new Object();
-    private boolean closeExplicit = false;
-
-    private SecureShellListener listener = null;
+    private boolean closeFlag = false;
 
     private void _openShell(String userId, String userPw, String host, String encOpt, int cols, int rows) throws IllegalArgumentException, JSchException, IOException, IllegalThreadStateException
     {
         if(userId == null || userId.isEmpty() || userPw == null || userPw.isEmpty() ) {
             throw new IllegalArgumentException("Both userID and userPW never be null or empty");
-        }
-        if(this.getState() != State.NEW) {
-            throw new IllegalThreadStateException();
         }
 
         if(isConnected()) { _closeShell(); }
@@ -87,10 +79,12 @@ public class SecureShell extends Thread
             js.connect(5000); // try 5 sec
 
             ch = (ChannelShell)js.openChannel("shell");
+
+            ch.setInputStream(null);
+            ch.setOutputStream(jsTerminalOut);
             
             // Should call Set/Get Input/OutputStream before call connect()!!
             jsCommandOut = ch.getOutputStream();
-            jsTerminalIn = ch.getInputStream();
 
             ch.setEnv("LANG", encOpt); // Language Setting if needed
 
@@ -112,10 +106,15 @@ public class SecureShell extends Thread
 
     private void _closeShell() {
         synchronized(stateMutex) {
+            if( closeFlag ) return; // Prevent Recursive Close Call
+            closeFlag = true;
             if( jsSession != null ) {
                 if( jsSession.isConnected() ) {
                     if(jsChannel != null) {
-                        jsChannel.disconnect();
+                        if( jsChannel.isConnected() ) {
+                            jsChannel.setOutputStream(null);
+                            jsChannel.disconnect();
+                        }
                         jsChannel = null;
                     }
                     jsSession.disconnect();
@@ -125,12 +124,11 @@ public class SecureShell extends Thread
             if(jsCtx != null) { jsCtx = null; }
 
             jsCommandOut = null;
-            jsTerminalIn = null;
+            closeFlag = false;
         }
     }
 
     ////> Public Method
-    public InputStream getTerminalInStream() { return jsTerminalIn; }
     public String getDefaultLanguageOption() {
         // return Default Options (By ServerSide Locale)
         Locale current = Locale.getDefault();
@@ -143,30 +141,28 @@ public class SecureShell extends Thread
         }
     }
 
-    public void openRemote(String userId, String userPw, String host, SecureShellListener _l ) throws IllegalArgumentException, JSchException, IOException, IllegalThreadStateException {
-        openRemote(userId, userPw, host, null, -1, -1, _l);
-    }
-    public void openRemote(String userId, String userPw, String host, String encOpt, SecureShellListener _l) throws JSchException, IOException, IllegalThreadStateException {
-        openRemote(userId, userPw, host, encOpt, -1, -1, _l);
-    }
-    public void openRemote(String userId, String userPw, String host, String encOpt, int cols, int rows, SecureShellListener _l) throws JSchException, IOException, IllegalThreadStateException {
-        if( _l == null ) throw new IllegalArgumentException("LocalShellListener Interface never be null");
-        listener = _l;
-        _openShell(userId, userPw, host, encOpt, cols, rows);
-        super.start();
+    public void setOutputStream(OutputStream out) { // Call Before OpenRemote!!
+        jsTerminalOut = out;
     }
 
-    public void open(String userId, String userPw, SecureShellListener _l ) throws IllegalArgumentException, JSchException, IOException, IllegalThreadStateException {
-        open(userId, userPw, null, -1, -1, _l);
+    public void openRemote(String userId, String userPw, String host ) throws JSchException, IOException {
+        openRemote(userId, userPw, host, null, -1, -1);
     }
-    public void open(String userId, String userPw, String encOpt, SecureShellListener _l) throws JSchException, IOException, IllegalThreadStateException {
-        open(userId, userPw, encOpt, -1, -1, _l);
+    public void openRemote(String userId, String userPw, String host, String encOpt) throws JSchException, IOException {
+        openRemote(userId, userPw, host, encOpt, -1, -1);
     }
-    public void open(String userId, String userPw, String encOpt, int cols, int rows, SecureShellListener _l) throws JSchException, IOException, IllegalThreadStateException {
-        if( _l == null ) throw new IllegalArgumentException("LocalShellListener Interface never be null");
-        listener = _l;
+    public void openRemote(String userId, String userPw, String host, String encOpt, int cols, int rows) throws JSchException, IOException {
+        _openShell(userId, userPw, host, encOpt, cols, rows);
+    }
+
+    public void open(String userId, String userPw ) throws JSchException, IOException {
+        open(userId, userPw, null, -1, -1);
+    }
+    public void open(String userId, String userPw, String encOpt) throws JSchException, IOException {
+        open(userId, userPw, encOpt, -1, -1);
+    }
+    public void open(String userId, String userPw, String encOpt, int cols, int rows) throws JSchException, IOException {
         _openShell(userId, userPw, null, encOpt, cols, rows);
-        super.start();
     }
 
     public void resize(int cols, int rows) {
@@ -177,56 +173,12 @@ public class SecureShell extends Thread
     }
 
     public void close() { // force close
-        if( isConnected() ) {
-            closeExplicit = true;
-            _closeShell();
-            try { super.join(); } catch(Exception ignore){}
-        }
-        else {
-            _closeShell(); // Not Actual Close Action But CleanUp all Reference to null
-        }
+        _closeShell();
     }
 
     public void write(byte[] msg) throws IOException{
-        if( jsCommandOut != null ) { jsCommandOut.write(msg); jsCommandOut.flush(); }
-    }
-
-    @Override
-    public void start() throws IllegalAccessError {
-        // Prevent Default Start Method
-        throw new IllegalAccessError("Do not call start() method directly, instead call open() method");
-    }
-
-    @Override
-    public void run() 
-    {
-        StringBuilder sb = new StringBuilder();
-        byte[] buffer = new byte[1024];
-        InputStream termIn = getTerminalInStream();
-
-        try {
-            while( isConnected() ) 
-            {
-                if( termIn.available() <= 0 ) {
-                    if(sb.length() > 0 && listener != null) {
-                        listener.onMessage(sb.toString());
-                        sb.setLength(0);
-                    }
-                }
-                int nRead = termIn.read(buffer, 0, buffer.length);
-                if(nRead < 0) break;
-                sb.append( new String(buffer, 0, nRead) );
-            }
-        }
-        catch(Exception e) {
-            e.printStackTrace();
-        }
-        
-        if(!closeExplicit) { // Shell Closed via logout
-            _closeShell(); // cleanUp Shell
-            if(listener != null) {
-                listener.onLogOut();
-            }
+        synchronized(stateMutex) {
+            if( jsCommandOut != null ) { jsCommandOut.write(msg); jsCommandOut.flush(); }
         }
     }
 }

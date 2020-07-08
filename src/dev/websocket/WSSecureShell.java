@@ -1,13 +1,11 @@
 package dev.websocket;
 
 import java.io.IOException;
-import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 import javax.websocket.OnOpen;
-import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import javax.websocket.CloseReason;
 import javax.websocket.CloseReason.CloseCodes;
@@ -20,8 +18,9 @@ import dev.jsonrpc.JsonUtil;
 import dev.jsonrpc.JsonRPCRequest;
 import dev.jsonrpc.params.*;
 import dev.jsonrpc.params.ParamLog.LogType;
-import dev.util.crypto.AESUtil;
 import dev.util.ssh.SecureShell;
+import dev.util.ssh.SecureShellWsWriter;
+import dev.util.ssh.SecureShellWsWriterSecure;
 
 import com.jcraft.jsch.*;
 import com.google.gson.*;
@@ -29,7 +28,7 @@ import com.google.gson.*;
 // Create Instance Per Connection
 
 @ServerEndpoint(value="/ws/secureshell")
-public class WSSecureShell implements SecureShell.SecureShellListener
+public class WSSecureShell
 {
     // Request Parameter
     private final static String PARAM_LOCALE  = "LOCALE";
@@ -103,44 +102,6 @@ public class WSSecureShell implements SecureShell.SecureShellListener
 
         return null;
     }
-
-    // Implementation - LocalShell.MessageWriter
-
-    @Override
-    public void onMessage(String message) {
-        synchronized(wsMutex) {
-            if( wsSession != null && wsSession.isOpen() ) {
-                try {
-                    ParamOnData params = null;
-                    if(encKey != null)
-                    {
-                        IvParameterSpec iv   = AESUtil.generateInitializationVector();
-                        String encPartBase64 = AESUtil.encryptDataToBase64(encKey, iv, message.getBytes("UTF-8"));
-                        String ivPartBase64  = Base64.getEncoder().encodeToString(iv.getIV());
-
-                        ParamOnData.CipherData data =  new ParamOnData.CipherData(ivPartBase64, encPartBase64, CipherEncoding.BASE64);
-                        params = new ParamOnData(data);
-                    }
-                    else {
-                        params = new ParamOnData(message);
-                    }
-
-                    wsSession.getBasicRemote().sendText( JsonUtil.toJson( JsonRPCRequest.createNotify(JsonRPCRequest.METHOD_ON_DATA, params) ) );
-                }
-                catch( IOException ioe ) {
-                    ioe.printStackTrace();
-                    _closeAll(new CloseReason(CloseCodes.UNEXPECTED_CONDITION, ioe.getMessage()));
-                }
-                catch(Exception e) {
-                    e.printStackTrace();
-                    _closeAll(new CloseReason(CloseCodes.UNEXPECTED_CONDITION, e.getMessage()));
-                }
-            }
-        }
-    }
-
-    @Override
-    public void onLogOut() { _closeAll(); }
 
     // WebSocket Implementation
 
@@ -224,6 +185,7 @@ public class WSSecureShell implements SecureShell.SecureShellListener
                 ParamConnect connParam     = null;
                 ParamConnect.ConnectionInfo info = null;
                 ParamConnect.TerminalOptions options = null;
+                SecretKeySpec keySpec = null;
                 try {
                     connParam = request.getParamAsClass(ParamConnect.class);
                     info      = connParam.getConnectionInfoData();
@@ -231,8 +193,6 @@ public class WSSecureShell implements SecureShell.SecureShellListener
 
                     if(connParam.isSecured) {
                         byte[] keyBytes = info.getKeyBytes();
-                        SecretKeySpec keySpec = null;
-
                         if( keyBytes != null ) {
                             keySpec = new SecretKeySpec( keyBytes, "AES" );
                         }
@@ -241,7 +201,7 @@ public class WSSecureShell implements SecureShell.SecureShellListener
                             throw new JsonSyntaxException("\"key\" field is not specified or invalid format");
                         }
 
-                        encKey = keySpec;
+                        encKey = keySpec; // Save Key for Decrypt Input Message
                     }
                 }
                 catch(Exception e) { // catch JsonSyntaxException, UnsupportedEncodingException
@@ -250,6 +210,9 @@ public class WSSecureShell implements SecureShell.SecureShellListener
                 }
 
                 SecureShell _sh = new SecureShell();
+                java.io.OutputStream out = connParam.isSecured 
+                                         ? (new SecureShellWsWriterSecure(_sh, wsSession, keySpec)) 
+                                         : (new SecureShellWsWriter(_sh, wsSession));
                 try { 
                     int cols = -1;
                     int rows = -1;
@@ -259,11 +222,13 @@ public class WSSecureShell implements SecureShell.SecureShellListener
                         rows = options.resize.rows;
                     }
 
+                    _sh.setOutputStream(out); // Set Output Stream Before open method
+
                     if( info.host != null ) {
-                        _sh.openRemote( info.id, info.pw, info.host, shEncOpt, cols, rows, this );
+                        _sh.openRemote( info.id, info.pw, info.host, shEncOpt, cols, rows );
                     }
                     else {
-                        _sh.open( info.id, info.pw, shEncOpt, cols, rows, this ); 
+                        _sh.open( info.id, info.pw, shEncOpt, cols, rows ); 
                     }
                 }
                 catch(JSchException je) { // Connection Error
