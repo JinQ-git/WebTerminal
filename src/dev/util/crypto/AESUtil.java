@@ -210,7 +210,7 @@ public class AESUtil {
 
     public static SecretKeySpec generateSecretKeyWithPBKDF2(String password, KEY_SIZE keySize) {
         SecureRandom sr = null;
-        try { SecureRandom.getInstanceStrong(); }
+        try { sr = SecureRandom.getInstanceStrong(); }
         catch(NoSuchAlgorithmException nsae) { sr = new SecureRandom(); }
 
         byte[] salt = new byte[16];
