@@ -5,7 +5,7 @@
     xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee http://xmlns.jcp.org/xml/ns/javaee/web-app_4_0.xsd" 
     version="4.0"
 >
-    <display-name>DevNetwork</display-name>
+    <display-name>DevTerminal</display-name>
     <!--
     <welcome-file-list>
         <welcome-file>index.html</welcome-file>
@@ -19,8 +19,4 @@
         <param-value></param-value>
     </context-param>
 -->
-    <context-param>
-        <param-name>DEV_ROOT</param-name>
-        <param-value>/Users/curvsurf/develop/work</param-value>
-    </context-param>
 </web-app>
