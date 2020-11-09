@@ -54,7 +54,11 @@ class JsonRPCRequestMaker {
 
     parseDataRPC(rpc) {
         if( rpc.method == REQ_RESP_DATA ) {
-            return rpc.params.data;
+            if (rpc.params.isEncoded) {
+                return atob(rpc.params.data);
+            } else {
+                return rpc.params.data;
+            }
         }
         return "";
     }
