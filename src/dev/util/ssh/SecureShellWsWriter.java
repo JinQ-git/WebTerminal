@@ -70,7 +70,7 @@ public class SecureShellWsWriter extends OutputStream {
                 b = planeText.getBytes();
                 String inCharSetBase64 = Base64.getEncoder().encodeToString(b);
                 try {
-                    ws.getAsyncRemote().sendText(
+                    ws.getBasicRemote().sendText(
                         String.format(
                             "{\"method\":\"data\",\"params\":{\"data\":\"%s\",\"isEncoded\":true}}",
                             inCharSetBase64
