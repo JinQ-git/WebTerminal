@@ -3,6 +3,7 @@ package dev.util.ssh;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
+import java.util.Base64;
 import javax.websocket.Session;
 
 // Secure Shell WebSocket Writer
@@ -65,12 +66,20 @@ public class SecureShellWsWriter extends OutputStream {
     public void write(byte[] b, int off, int len) throws IOException {
         synchronized(mutex) {
             if( ws.isOpen() ) {
-                ws.getBasicRemote().sendText(
-                    String.format(
-                        "{\"method\":\"data\",\"params\":{\"data\":\"%s\"}}",
-                        new String( b, off, len, inCharset )
-                    )
-                );
+                String planeText = new String(b, off, len, inCharset);
+                b = planeText.getBytes();
+                String inCharSetBase64 = Base64.getEncoder().encodeToString(b);
+                try {
+                    ws.getAsyncRemote().sendText(
+                        String.format(
+                            "{\"method\":\"data\",\"params\":{\"data\":\"%s\",\"isEncoded\":true}}",
+                            inCharSetBase64
+                        )
+                    );
+                }catch (Exception e) {
+                    e.printStackTrace();
+                    throw new IOException();
+                }
             }
         }
     }
