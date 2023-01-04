@@ -1,5 +1,7 @@
 # Web Browser Terminal
 
+> Deprecated: Moved to a following link: [https://github.com/JinQ-git/WebTerminalNew](https://github.com/JinQ-git/WebTerminalNew)
+
 ## Overview
 
 [See here](doc/Overview.md)
